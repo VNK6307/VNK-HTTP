@@ -6,7 +6,7 @@ public class Main {
     public static void main(String[] args) {
         int port = 9999;
 
-        List<String> l = List.of("/index.html",
+        List<String> listOfFiles = List.of("/index.html",
                 "/spring.svg",
                 "/spring.png",
                 "/resources.html",
@@ -17,7 +17,7 @@ public class Main {
                 "/classic.html",
                 "/events.html",
                 "/events.js");
-        Server server = new Server(l);
+        Server server = new Server(listOfFiles);
         server.start(port);
     }
 }
