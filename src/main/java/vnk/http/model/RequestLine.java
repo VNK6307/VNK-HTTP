@@ -9,8 +9,9 @@ public class RequestLine {
     private final String path;
     private final String version;
 
+
     public RequestLine(BufferedInputStream in) throws IOException {
-        String[] requestLine = parse(in);
+        String[] requestLine = parseRequestLine(in);
         this.method = requestLine[0];
         this.path = requestLine[1];
         this.version = requestLine[2];
@@ -29,7 +30,7 @@ public class RequestLine {
         return version;
     }
 
-    private String[] parse(BufferedInputStream in) throws IOException {
+    private String[] parseRequestLine(BufferedInputStream in) throws IOException {
         final var limit = 4096;
 
         in.mark(limit);
@@ -43,6 +44,7 @@ public class RequestLine {
         if (requestLine.length != 3) {
             return null;
         }
+
         return requestLine;
     }
 
@@ -59,4 +61,3 @@ public class RequestLine {
         return -1;
     }
 }
-

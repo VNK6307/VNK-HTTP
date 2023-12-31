@@ -1,5 +1,8 @@
 package vnk.http;
 
+import org.apache.hc.core5.http.NameValuePair;
+import org.apache.hc.core5.net.URLEncodedUtils;
+import vnk.http.model.Request;
 import vnk.http.model.RequestLine;
 
 import java.io.BufferedInputStream;
@@ -7,7 +10,12 @@ import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.logging.Logger;
@@ -30,9 +38,15 @@ public class Server {
         try (final var serverSocket = new ServerSocket(port)) {
             while (true) {
                 try {
-                    final var socket = serverSocket.accept();
+                    final Socket socket = serverSocket.accept();
                     threadPool.execute(() -> {
-                        handleConnection(socket);
+                        try {
+                            handleConnection(socket);
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        } catch (URISyntaxException e) {
+                            LOG.warning(e.getMessage());
+                        }
                     });
                 } catch (IOException e) {
                     LOG.warning(e.getMessage());
@@ -41,9 +55,9 @@ public class Server {
         } catch (IOException e) {
             LOG.warning(e.getMessage());
         }
-    }// start
+    }
 
-    private void handleConnection(Socket socket) {
+    private void handleConnection(Socket socket) throws IOException, URISyntaxException {
         String thread = Thread.currentThread().getName();
         System.out.println("Connection to thread " + thread + " active");
         try (
@@ -51,18 +65,21 @@ public class Server {
                 final var out = new BufferedOutputStream(socket.getOutputStream())
         ) {
             callHandler(in, out);
-            // ToDo вызвать соответствующий метод. Излишне???
-
-
         } catch (IOException e) {
             LOG.warning(e.getMessage());
         }
+
     }
 
-    private void callHandler(BufferedInputStream in, BufferedOutputStream out) throws IOException {
+    private void callHandler(BufferedInputStream in, BufferedOutputStream out) throws IOException, URISyntaxException {
+
         final RequestLine requestLine = new RequestLine(in);
         System.out.println(requestLine.getPath());
-        if (!validPaths.contains(requestLine.getPath())) {
+
+        URI uri = new URI(requestLine.getPath());
+        Request request = new Request(uri.getPath(), parseQueryParams(uri.getQuery()));
+
+        if (!validPaths.contains(request.getPath())) {
             sendNotFoundResponse(out);
             return;
         }
@@ -71,15 +88,24 @@ public class Server {
 
         switch (method) {
             case GET:
-                Handler.handlerGet(out, requestLine);
+                Handler.handlerGet(out, request);
                 break;
             case POST:
-                Handler.handlerPost(out, requestLine);
+                Handler.handlerPost(out, request);
                 break;
             default:
                 badRequest(out);
         }
+    }
 
+    private Map<String, String> parseQueryParams(String queryString) {
+        List<NameValuePair> paramsList = URLEncodedUtils.parse(queryString, StandardCharsets.UTF_8);
+        Map<String, String> queryParams = new HashMap<>();
+
+        for (NameValuePair param : paramsList) {
+            queryParams.put(param.getName(), param.getValue());
+        }
+        return queryParams;
     }
 
     private void badRequest(BufferedOutputStream out) throws IOException {
