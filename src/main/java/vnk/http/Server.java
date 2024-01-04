@@ -1,19 +1,30 @@
 package vnk.http;
 
+import org.apache.hc.core5.http.NameValuePair;
+import org.apache.hc.core5.net.URLEncodedUtils;
+import vnk.http.model.Request;
+import vnk.http.model.RequestLine;
+
+import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
-import java.io.BufferedReader;
 import java.io.IOException;
-import java.io.InputStreamReader;
 import java.net.ServerSocket;
 import java.net.Socket;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.time.LocalDateTime;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.logging.Logger;
 
 public class Server {
+    private static final Logger LOG = Logger.getLogger(Server.class.getName());
+    public static final String GET = "GET";
+    public static final String POST = "POST";
+
     private final List<String> validPaths;
     private static final int THREAD_POOL_SIZE = 64;
     private final ExecutorService threadPool;
@@ -27,52 +38,84 @@ public class Server {
         try (final var serverSocket = new ServerSocket(port)) {
             while (true) {
                 try {
-                    final var socket = serverSocket.accept();
+                    final Socket socket = serverSocket.accept();
                     threadPool.execute(() -> {
-                        connection(socket);
+                        try {
+                            handleConnection(socket);
+                        } catch (IOException e) {
+                            throw new RuntimeException(e);
+                        } catch (URISyntaxException e) {
+                            LOG.warning(e.getMessage());
+                        }
                     });
                 } catch (IOException e) {
+                    LOG.warning(e.getMessage());
                 }
             }
         } catch (IOException e) {
+            LOG.warning(e.getMessage());
         }
     }
 
-    private void connection(Socket socket) {
+    private void handleConnection(Socket socket) throws IOException, URISyntaxException {
         String thread = Thread.currentThread().getName();
-        System.out.println("Connection to thread " + thread);
+        System.out.println("Connection to thread " + thread + " active");
         try (
-                final var in = new BufferedReader(new InputStreamReader(socket.getInputStream()));
+                final var in = new BufferedInputStream(socket.getInputStream());
                 final var out = new BufferedOutputStream(socket.getOutputStream())
         ) {
-            handleRequest(in, out);
+            callHandler(in, out);
         } catch (IOException e) {
-            e.printStackTrace();
+            LOG.warning(e.getMessage());
         }
+
     }
 
-    private void handleRequest(BufferedReader in, BufferedOutputStream out) throws IOException {
-        final var requestLine = in.readLine();
-        final var parts = requestLine.split(" ");
+    private void callHandler(BufferedInputStream in, BufferedOutputStream out) throws IOException, URISyntaxException {
 
-        if (parts.length != 3) {
-            out.close();
-            return;
-        }
+        final RequestLine requestLine = new RequestLine(in);
+        System.out.println(requestLine.getPath());
 
-        final var path = parts[1];
-        if (!validPaths.contains(path)) {
+        URI uri = new URI(requestLine.getPath());
+        Request request = new Request(uri.getPath(), parseQueryParams(uri.getQuery()));
+
+        if (!validPaths.contains(request.getPath())) {
             sendNotFoundResponse(out);
             return;
         }
-        final var filePath = Path.of(".", "public", path);
-        final var mimeType = Files.probeContentType(filePath);
 
-        if (path.equals("/classic.html")) {
-            classicRequest(out, filePath, mimeType);
-        } else {
-            regularRequest(out, filePath, mimeType);
+        final String method = requestLine.getMethod();
+
+        switch (method) {
+            case GET:
+                Handler.handlerGet(out, request);
+                break;
+            case POST:
+                Handler.handlerPost(out, request);
+                break;
+            default:
+                badRequest(out);
         }
+    }
+
+    private Map<String, String> parseQueryParams(String queryString) {
+        List<NameValuePair> paramsList = URLEncodedUtils.parse(queryString, StandardCharsets.UTF_8);
+        Map<String, String> queryParams = new HashMap<>();
+
+        for (NameValuePair param : paramsList) {
+            queryParams.put(param.getName(), param.getValue());
+        }
+        return queryParams;
+    }
+
+    private void badRequest(BufferedOutputStream out) throws IOException {
+        out.write((
+                "HTTP/1.1 400 Bad Request\r\n" +
+                        "Content-Length: 0\r\n" +
+                        "Connection: close\r\n" +
+                        "\r\n"
+        ).getBytes());
+        out.flush();
         out.close();
     }
 
@@ -84,25 +127,4 @@ public class Server {
         out.write(response.getBytes());
         out.flush();
     }
-
-    private void sendResponse(BufferedOutputStream out, String mimeType, byte[] content) throws IOException {
-        String response = "HTTP/1.1 200 OK\r\n" +
-                "Content-Type: " + mimeType + "\r\n" +
-                "Content-Length: " + content.length + "\r\n" +
-                "Connection: close\r\n" +
-                "\r\n";
-        out.write(response.getBytes());
-        out.write(content);
-        out.flush();
-    }
-
-    private void classicRequest(BufferedOutputStream out, Path filePath, String mimeType) throws IOException {
-        String template = Files.readString(filePath);
-        String content = template.replace("{time}", LocalDateTime.now().toString());
-        sendResponse(out, mimeType, content.getBytes());
-    }
-
-    private void regularRequest(BufferedOutputStream out, Path filePath, String mimeType) throws IOException {
-        sendResponse(out, mimeType, Files.readAllBytes(filePath));
-    }
-}// class
+}
